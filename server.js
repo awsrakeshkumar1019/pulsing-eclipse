@@ -1,151 +1,49 @@
-const { createServer } = require('http');
-const { parse } = require('url');
-const next = require('next');
-const { Server } = require('socket.io');
+// Development convenience server
+// Runs both Next.js and the signaling server together for local development
+// In production, these run separately:
+//   - Next.js frontend → Vercel
+//   - Signaling server  → Render.com (or similar)
 
-const dev = process.env.NODE_ENV !== 'production';
-const hostname = 'localhost';
-const port = parseInt(process.env.PORT || '3000', 10);
+const { spawn } = require('child_process');
+const path = require('path');
 
-const app = next({ dev, hostname, port });
-const handle = app.getRequestHandler();
+console.log('🚀 Starting MeetUp development servers...\n');
 
-// Store rooms and their participants
-const rooms = new Map();
+// Start the signaling server
+const signaling = spawn('node', [path.join(__dirname, 'signaling-server', 'index.js')], {
+  stdio: 'inherit',
+  env: { ...process.env, PORT: '3001' },
+});
 
-app.prepare().then(() => {
-  const server = createServer(async (req, res) => {
-    try {
-      const parsedUrl = parse(req.url, true);
-      await handle(req, res, parsedUrl);
-    } catch (err) {
-      console.error('Error occurred handling', req.url, err);
-      res.statusCode = 500;
-      res.end('internal server error');
-    }
-  });
+// Start Next.js dev server
+const nextDev = spawn('npx', ['next', 'dev'], {
+  stdio: 'inherit',
+  env: { ...process.env },
+});
 
-  const io = new Server(server, {
-    cors: {
-      origin: '*',
-      methods: ['GET', 'POST'],
-    },
-  });
+// Handle process termination
+process.on('SIGINT', () => {
+  signaling.kill('SIGINT');
+  nextDev.kill('SIGINT');
+  process.exit();
+});
 
-  io.on('connection', (socket) => {
-    console.log(`User connected: ${socket.id}`);
+process.on('SIGTERM', () => {
+  signaling.kill('SIGTERM');
+  nextDev.kill('SIGTERM');
+  process.exit();
+});
 
-    // Join a room
-    socket.on('join-room', ({ roomId, userName }) => {
-      socket.join(roomId);
+signaling.on('exit', (code) => {
+  if (code !== null && code !== 0) {
+    console.error(`Signaling server exited with code ${code}`);
+  }
+});
 
-      // Initialize room if it doesn't exist
-      if (!rooms.has(roomId)) {
-        rooms.set(roomId, new Map());
-      }
-
-      const room = rooms.get(roomId);
-      room.set(socket.id, {
-        userName: userName || `User-${socket.id.slice(0, 4)}`,
-        joinedAt: Date.now(),
-      });
-
-      console.log(`${userName} joined room ${roomId}. Room size: ${room.size}`);
-
-      // Send existing participants to the new user
-      const existingUsers = [];
-      room.forEach((user, id) => {
-        if (id !== socket.id) {
-          existingUsers.push({ id, userName: user.userName });
-        }
-      });
-      socket.emit('existing-users', existingUsers);
-
-      // Notify others in the room
-      socket.to(roomId).emit('user-joined', {
-        id: socket.id,
-        userName: room.get(socket.id).userName,
-      });
-
-      // Update participant count for everyone
-      io.to(roomId).emit('participant-count', room.size);
-    });
-
-    // WebRTC signaling: sending offer
-    socket.on('signal-offer', ({ to, signal, userName }) => {
-      io.to(to).emit('signal-offer', {
-        from: socket.id,
-        signal,
-        userName,
-      });
-    });
-
-    // WebRTC signaling: sending answer
-    socket.on('signal-answer', ({ to, signal }) => {
-      io.to(to).emit('signal-answer', {
-        from: socket.id,
-        signal,
-      });
-    });
-
-    // Chat message
-    socket.on('chat-message', ({ roomId, message, userName }) => {
-      io.to(roomId).emit('chat-message', {
-        id: Date.now().toString(),
-        senderId: socket.id,
-        userName,
-        message,
-        timestamp: new Date().toISOString(),
-      });
-    });
-
-    // Toggle audio/video status
-    socket.on('media-toggle', ({ roomId, type, enabled }) => {
-      socket.to(roomId).emit('media-toggle', {
-        userId: socket.id,
-        type,
-        enabled,
-      });
-    });
-
-    // Handle disconnection
-    socket.on('disconnect', () => {
-      console.log(`User disconnected: ${socket.id}`);
-
-      // Remove user from all rooms
-      rooms.forEach((room, roomId) => {
-        if (room.has(socket.id)) {
-          room.delete(socket.id);
-
-          // Notify others
-          socket.to(roomId).emit('user-left', { id: socket.id });
-          io.to(roomId).emit('participant-count', room.size);
-
-          // Clean up empty rooms
-          if (room.size === 0) {
-            rooms.delete(roomId);
-          }
-        }
-      });
-    });
-
-    // Leave room explicitly
-    socket.on('leave-room', ({ roomId }) => {
-      socket.leave(roomId);
-      const room = rooms.get(roomId);
-      if (room) {
-        room.delete(socket.id);
-        socket.to(roomId).emit('user-left', { id: socket.id });
-        io.to(roomId).emit('participant-count', room.size);
-
-        if (room.size === 0) {
-          rooms.delete(roomId);
-        }
-      }
-    });
-  });
-
-  server.listen(port, () => {
-    console.log(`> MeetUp ready on http://${hostname}:${port}`);
-  });
+nextDev.on('exit', (code) => {
+  if (code !== null && code !== 0) {
+    console.error(`Next.js dev server exited with code ${code}`);
+  }
+  signaling.kill();
+  process.exit(code || 0);
 });
