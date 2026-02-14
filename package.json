@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "node server.js",
+    "dev:next": "next dev",
+    "dev:signal": "node signaling-server/index.js",
     "build": "next build",
-    "start": "NODE_ENV=production node server.js",
+    "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {

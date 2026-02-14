@@ -10,10 +10,13 @@ export function useSocket() {
 
     const getSocket = useCallback(() => {
         if (!socketInstance) {
-            socketInstance = io({
+            // Connect to the external signaling server
+            const signalingUrl = process.env.NEXT_PUBLIC_SIGNALING_URL || 'http://localhost:3001';
+
+            socketInstance = io(signalingUrl, {
                 transports: ['websocket', 'polling'],
                 reconnection: true,
-                reconnectionAttempts: 5,
+                reconnectionAttempts: 10,
                 reconnectionDelay: 1000,
             });
 

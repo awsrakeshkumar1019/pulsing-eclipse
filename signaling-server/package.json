@@ -1,0 +1,12 @@
+{
+    "name": "meetup-signaling-server",
+    "version": "1.0.0",
+    "description": "Signaling server for MeetUp video conferencing app",
+    "main": "index.js",
+    "scripts": {
+        "start": "node index.js"
+    },
+    "dependencies": {
+        "socket.io": "^4.8.3"
+    }
+}
